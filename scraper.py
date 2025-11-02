@@ -1,10 +1,11 @@
-import requests
-from bs4 import BeautifulSoup
+import feedparser
 import json
 import os
 from notifier import send_whatsapp
 
-BASE_URL = "https://www.funda.nl/koop/almere/p{page}/"
+RSS_URL = "https://www.funda.nl/koop/almere/rss/"
+MAX_PRICE = 450000
+MIN_SIZE = 100
 
 # Load previously seen listings
 if os.path.exists("listings.json"):
@@ -15,60 +16,40 @@ else:
 
 new_listings = []
 
-print("Starting Funda scraping...")
+print("Starting Funda scraping via RSS feed...")
 
-for page in range(1, 3):  # first 2 pages
-    url = BASE_URL.format(page=page)
-    print(f"Fetching page {page}: {url}")
-    response = requests.get(url)
-    if response.status_code != 200:
-        print(f"Failed to fetch page {page}, status code: {response.status_code}")
+feed = feedparser.parse(RSS_URL)
+
+for entry in feed.entries:
+    link = entry.link
+    if link in seen:
         continue
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    listings = soup.select("section.search-result")  # Updated selector for current Funda
-
-    print(f"Found {len(listings)} listings on page {page}")
-
-    for listing in listings:
-        # Extract link
-        a_tag = listing.select_one("a.search-result__header-link")
-        if not a_tag:
-            continue
-        link = "https://www.funda.nl" + a_tag['href']
-
-        if link in seen:
-            continue
-
-        # Extract address
-        address_tag = listing.select_one("h2.search-result__title")
-        address = address_tag.text.strip() if address_tag else "Unknown"
-
+    # Example: extract price and size from title or summary
+    title = entry.title  # e.g., "B. Merkelbachstraat 43, Almere - €425.000 k.k. - 103 m²"
+    
+    try:
         # Extract price
-        price_tag = listing.select_one("span.search-result-price")
-        try:
-            price_text = price_tag.text.strip().replace("€", "").replace(".", "").split()[0]
-            price = int(price_text)
-        except:
-            price = 0
+        price_str = title.split("€")[1].split(" ")[0].replace(".", "")
+        price = int(price_str)
+    except:
+        price = 0
 
-        # Extract living area
-        size_tag = listing.select_one("span.search-result-metrics__living-area")
-        try:
-            size_text = size_tag.text.strip().replace("m²", "").split()[0]
-            size = int(size_text)
-        except:
-            size = 0
+    try:
+        # Extract size
+        size_str = title.split("-")[-1].strip().replace("m²","")
+        size = int(size_str)
+    except:
+        size = 0
 
-        # Apply criteria
-        if price <= 450000 and size >= 100:
-            new_listings.append({
-                "link": link,
-                "address": address,
-                "price": price,
-                "size": size
-            })
-            seen.add(link)
+    if price <= MAX_PRICE and size >= MIN_SIZE:
+        new_listings.append({
+            "link": link,
+            "title": title,
+            "price": price,
+            "size": size
+        })
+        seen.add(link)
 
 print(f"Total new listings found: {len(new_listings)}")
 
@@ -80,7 +61,7 @@ with open("listings.json", "w") as f:
 if new_listings:
     message = "New Funda listings in Almere:\n\n"
     for idx, l in enumerate(new_listings, start=1):
-        message += f"{idx}. {l['address']}\n   €{l['price']}, {l['size']} m²\n   {l['link']}\n\n"
+        message += f"{idx}. {l['title']}\n   {l['link']}\n\n"
     send_whatsapp(message)
     print("Messages sent successfully.")
 else:
